@@ -237,6 +237,33 @@ describe('messages route upstream adaptation', () => {
     expect(body.model).toBe('claude-opus-4-6-20250514')
   })
 
+  test('Claude variant beta headers affect routing but unsupported beta tokens are not forwarded upstream', async () => {
+    const res = await server.request('/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'anthropic-beta': 'claude-code-2025-01-01, context-1m-2025-08-07',
+      },
+      body: JSON.stringify({
+        model: 'claude-opus-4.6',
+        max_tokens: 64,
+        messages: [{ role: 'user', content: 'Say hello.' }],
+      }),
+    })
+
+    expect(res.status).toBe(200)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('https://api.githubcopilot.com/v1/messages')
+
+    const forwardedPayload = JSON.parse(String(init?.body)) as { model?: string }
+    expect(forwardedPayload.model).toBe('claude-opus-4.6-1m')
+
+    const forwardedHeaders = init?.headers as Record<string, string> | undefined
+    expect(forwardedHeaders?.['anthropic-beta']).toBe('advanced-tool-use-2025-11-20')
+  })
+
   test('Claude streaming responses are piped through natively', async () => {
     const res = await server.request('/v1/messages', {
       method: 'POST',

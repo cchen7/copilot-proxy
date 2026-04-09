@@ -1,3 +1,5 @@
+import process from 'node:process'
+
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
@@ -14,6 +16,22 @@ export const server = new Hono()
 
 server.use(logger())
 server.use(cors())
+
+// API key authentication middleware
+server.use(async (c, next) => {
+  const apiKey = process.env.API_KEY
+  if (!apiKey)
+    return next() // no API_KEY configured, skip auth
+
+  if (c.req.path === '/')
+    return next() // health check is public
+
+  const key = c.req.header('x-api-key') || c.req.header('api-key') || c.req.header('authorization')?.replace(/^Bearer\s+/i, '')
+  if (key !== apiKey) {
+    return c.json({ error: 'Unauthorized' }, 401)
+  }
+  return next()
+})
 
 server.get('/', c => c.text('Server running'))
 

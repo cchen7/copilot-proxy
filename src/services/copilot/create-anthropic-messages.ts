@@ -21,6 +21,37 @@ import { HTTPError } from '~/lib/error'
 import { state } from '~/lib/state'
 import { instrumentCopilotEventStream, logUpstreamHeadersReceived, logUpstreamRequestCompleted } from './stream-metrics'
 
+const ANTHROPIC_BETA = 'advanced-tool-use-2025-11-20'
+const FORWARDED_ANTHROPIC_BETA_PREFIXES = ['advanced-tool-use-']
+
+function parseAnthropicBetaHeader(anthropicBeta: string | undefined): Array<string> {
+  if (!anthropicBeta) {
+    return []
+  }
+
+  return anthropicBeta
+    .split(',')
+    .map(token => token.trim())
+    .filter(Boolean)
+}
+
+/**
+ * Anthropic compatibility headers are used for two different purposes:
+ * 1. local routing hints such as `context-1m-*` / `fast-mode-*`
+ * 2. upstream Copilot feature gates that `/v1/messages` actually accepts
+ *
+ * Only the second category should be forwarded to Copilot. Otherwise Copilot's
+ * native Anthropic endpoint rejects the request with `unsupported beta header(s)`.
+ */
+export function buildUpstreamAnthropicBetaHeader(anthropicBeta: string | undefined): string {
+  const forwarded = parseAnthropicBetaHeader(anthropicBeta).filter(token =>
+    FORWARDED_ANTHROPIC_BETA_PREFIXES.some(prefix => token.startsWith(prefix)),
+  )
+
+  const unique = new Set([ANTHROPIC_BETA, ...forwarded])
+  return [...unique].join(', ')
+}
+
 export async function createAnthropicMessages(
   payload: AnthropicMessagesPayload,
   options?: { signal?: AbortSignal, anthropicBeta?: string },
@@ -34,7 +65,7 @@ export async function createAnthropicMessages(
   const headers: Record<string, string> = {
     ...copilotHeaders(state, enableVision),
     'X-Initiator': isAgentCall ? 'agent' : 'user',
-    ...(options?.anthropicBeta ? { 'anthropic-beta': options.anthropicBeta } : {}),
+    'anthropic-beta': buildUpstreamAnthropicBetaHeader(options?.anthropicBeta),
   }
 
   const requestStartedAt = Date.now()
